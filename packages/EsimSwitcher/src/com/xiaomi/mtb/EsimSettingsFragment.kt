@@ -32,7 +32,12 @@ class EsimSettingsFragment :
         setPreferencesFromResource(R.xml.settings_esim, rootKey)
 
         switchBar.onPreferenceChangeListener = this
-        switchBar.isChecked = esimController.getEsimEnabled()
+        // songyuan: onGetEsimStatus never returns on this device (the eSIM chip is
+        // powered down, so the modem does not answer the status hook) and this runs on
+        // the main thread, wedging the RIL. Reflect the eSIM's actual presence instead,
+        // which uses SubscriptionManager and never touches the modem hook. The setter
+        // path (onHookUimPowerReqEx + onSetEsimStatus) is unaffected.
+        switchBar.isChecked = esimController.getEsimActive()
         switchBar.isEnabled = true
         footerPref.title = getString(R.string.esim_footer_note)
     }

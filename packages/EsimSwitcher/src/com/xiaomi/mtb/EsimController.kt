@@ -9,6 +9,8 @@ package com.xiaomi.mtb
 import android.app.ActivityThread
 import android.content.Context
 import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
+import android.telephony.UiccSlotMapping
 import android.util.Log
 import dalvik.system.DexClassLoader
 import java.io.File
@@ -78,9 +80,28 @@ class EsimController private constructor(private val context: Context) {
 
     fun setEsimEnabled(isEnabled: Boolean) {
         if (DEBUG) Log.d(TAG, "setEsimEnabled, isEnabled = $isEnabled")
-        callMiRilHookMethod("onHookUimPowerReqEx", false, 0, 2, -1)
-        callMiRilHookMethod("onSetEsimStatus", -1, if (isEnabled) 0 else 1, true)
-        callMiRilHookMethod("onHookUimPowerReqEx", false, 1, 2, if (isEnabled) 1 else 0)
+
+        // songyuan: the Xiaomi OEM RIL hooks below hang this device -- the modem never
+        // answers the vendor QMI and the synchronous call wedges qcrilNrd. The platform
+        // supports the standard path instead: this modem reports simTypes [1, 2] for
+        // physical slot 1 (see UiccSlot.updateSimTypeInfo), RIL HAL is >= 2.3 so
+        // isGetOrSetSimTypeSupported() holds, and support_slot_switching_2psim_1esim_config
+        // is ENABLED, so UiccController.switchSlots() routes this to setSimType().
+        val telephonyManager = context.getSystemService(TelephonyManager::class.java)
+        val slotMapping =
+            listOf(
+                UiccSlotMapping(0, 0, 0, TelephonyManager.SIM_TYPE_PHYSICAL),
+                UiccSlotMapping(
+                    0,
+                    1,
+                    1,
+                    if (isEnabled) TelephonyManager.SIM_TYPE_EMBEDDED
+                    else TelephonyManager.SIM_TYPE_PHYSICAL,
+                ),
+            )
+        runCatching { telephonyManager?.setSimSlotMapping(slotMapping) }
+            .onSuccess { Log.i(TAG, "setSimSlotMapping succeeded, isEnabled = $isEnabled") }
+            .onFailure { e -> Log.e(TAG, "setSimSlotMapping failed: $e") }
     }
 
     private fun setupHook() {
