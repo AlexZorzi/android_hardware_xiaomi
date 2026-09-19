@@ -101,6 +101,57 @@ bool patchXiaomiPickupSensor(V2_1::SensorInfo& sensor) {
     return true;
 }
 
+/*
+ * Promote the rear ambient light sensor to android.sensor.light.
+ *
+ * The front ALS (Goodix GLS6151) sits underneath the display, so most of what it
+ * measures is the panel rather than the room. Stock cancels that out on the ADSP
+ * by subtracting a predicted panel emission, which needs the live backlight
+ * level and the colour the screen is drawing above the sensor -- data that comes
+ * from MIUI's display stack. We do not ship that, so the algorithm over-
+ * subtracts and pins its output to a constant 1.022 lux: sweeping the backlight
+ * moves the raw channels 25x without shifting the reported lux by a bit.
+ *
+ * These devices also carry a second, rear-facing ALS (SI-IN SIP2326LR1N) which
+ * is factory calibrated, auto-ranges its gain and reports real lux, but is only
+ * published under the vendor type xiaomi.sensor.back_lux. It has the same
+ * reporting characteristics as the front sensor (on-change, with a matching
+ * non-wakeup/wakeup pair), so it drops straight in.
+ *
+ * Runs as a post-pass over the assembled list rather than per sensor, so the
+ * dead front sensor is only dropped once a working replacement is known to be
+ * present. A device with a stuck light sensor is bad; one with no light sensor
+ * at all is worse.
+ */
+void patchXiaomiAmbientLightSensor(std::map<int32_t, V2_1::SensorInfo>& sensors) {
+    std::vector<int32_t> underDisplay;
+    std::vector<int32_t> rearFacing;
+
+    for (const auto& [handle, sensor] : sensors) {
+        if (sensor.type == V2_1::SensorType::LIGHT) {
+            underDisplay.push_back(handle);
+        } else if (sensor.typeAsString == "xiaomi.sensor.back_lux") {
+            rearFacing.push_back(handle);
+        }
+    }
+
+    if (rearFacing.empty()) {
+        return;
+    }
+
+    for (int32_t handle : underDisplay) {
+        ALOGI("Dropping under-display light sensor 0x%x: no panel compensation feed", handle);
+        sensors.erase(handle);
+    }
+
+    for (int32_t handle : rearFacing) {
+        V2_1::SensorInfo& sensor = sensors[handle];
+        ALOGI("Promoting rear light sensor 0x%x to android.sensor.light", handle);
+        sensor.type = V2_1::SensorType::LIGHT;
+        sensor.typeAsString = SENSOR_STRING_TYPE_LIGHT;
+    }
+}
+
 HalProxy::HalProxy() {
     static const std::string kMultiHalConfigFiles[] = {"/vendor/etc/sensors/hals.conf",
                                                        "/odm/etc/sensors/hals.conf"};
@@ -530,6 +581,8 @@ void HalProxy::initializeSensorList() {
                   mSubHalList[subHalIndex]->getName().c_str());
         }
     }
+
+    patchXiaomiAmbientLightSensor(mSensors);
 }
 
 void* HalProxy::getHandleForSubHalSharedObject(const std::string& filename) {

@@ -78,6 +78,20 @@ std::vector<V2_1::Event> HalProxyCallbackBase::processEvents(const std::vector<V
             continue;
         }
 
+        /*
+         * A sensor we retyped in patchXiaomiAmbientLightSensor still tags its
+         * events with the vendor type the sub-HAL gave them, which would not
+         * match the list we published. Realign it, leaving the two out-of-band
+         * event kinds alone: META_DATA carries flush-complete and ADDITIONAL_INFO
+         * carries calibration data, and neither describes the sensor's own type.
+         */
+        if (sensor.type == V2_1::SensorType::LIGHT &&
+            event.sensorType != V2_1::SensorType::LIGHT &&
+            event.sensorType != V2_1::SensorType::META_DATA &&
+            event.sensorType != V2_1::SensorType::ADDITIONAL_INFO) {
+            event.sensorType = V2_1::SensorType::LIGHT;
+        }
+
         if ((sensor.flags & V1_0::SensorFlagBits::WAKE_UP) != 0) {
             (*numWakeupEvents)++;
         }
